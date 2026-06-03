@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 )
 
@@ -29,10 +30,12 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 
 	pair, err := h.service.Login(r.Context(), req)
 	if err != nil {
+		log.Printf("auth login failed: email=%s err=%v", req.Email, err)
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 
+	log.Printf("auth login: email=%s", req.Email)
 	respond(w, http.StatusOK, pair)
 }
 
@@ -74,6 +77,7 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	}
 	pair, err := h.service.Refresh(r.Context(), req.RefreshToken)
 	if err != nil {
+		log.Printf("auth refresh failed: %v", err)
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
@@ -104,10 +108,12 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.service.ChangePassword(r.Context(), claims.UserID, req.NewPassword); err != nil {
+		log.Printf("auth change-password failed: user_id=%d err=%v", claims.UserID, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	log.Printf("auth change-password: user_id=%d", claims.UserID)
 	respond(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 

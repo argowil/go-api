@@ -15,7 +15,9 @@ type Message struct {
 
 // WSEvent wraps outgoing WebSocket messages with a type discriminator.
 type WSEvent struct {
-	Type    string   `json:"type"`              // "new" | "edit" | "delete"
+	Type    string   `json:"type"`              // "new" | "edit" | "delete" | "presence"
 	Message *Message `json:"message,omitempty"`
 	ID      uint     `json:"id,omitempty"`
+	UserID  uint     `json:"user_id,omitempty"` // presence events
+	Online  bool     `json:"online,omitempty"`  // presence events
 }

@@ -3,6 +3,7 @@ package news
 import (
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -31,6 +32,7 @@ func NewHandler(repo Repository, s3 *storage.Client) *Handler {
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	posts, err := h.repo.List(r.Context())
 	if err != nil {
+		log.Printf("news list failed: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -52,6 +54,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 
 	post, err := h.repo.Get(r.Context(), uint(id))
 	if err != nil {
+		log.Printf("news get failed: id=%d err=%v", id, err)
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
@@ -86,10 +89,43 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.repo.Create(r.Context(), post); err != nil {
+		log.Printf("news create failed: author_id=%d title=%q err=%v", claims.UserID, req.Title, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	log.Printf("news created: id=%d author_id=%d title=%q", post.ID, claims.UserID, post.Title)
 	respond(w, http.StatusCreated, post)
+}
+
+// Update godoc
+//
+//	PATCH /news/{id}  (teamleader / admin)
+func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		Title    string  `json:"title"`
+		Body     string  `json:"body"`
+		ImageURL *string `json:"image_url,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Title) == "" || strings.TrimSpace(req.Body) == "" {
+		http.Error(w, "title and body are required", http.StatusBadRequest)
+		return
+	}
+	if err := h.repo.Update(r.Context(), uint(id), req.Title, req.Body, req.ImageURL); err != nil {
+		log.Printf("news update failed: id=%d err=%v", id, err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	log.Printf("news updated: id=%d", id)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // Delete godoc
@@ -102,9 +138,11 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.repo.Delete(r.Context(), uint(id)); err != nil {
+		log.Printf("news delete failed: id=%d err=%v", id, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	log.Printf("news deleted: id=%d", id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -140,9 +178,11 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		AuthorID: claims.UserID,
 	}
 	if err := h.repo.CreateComment(r.Context(), comment); err != nil {
+		log.Printf("news comment failed: post_id=%d author_id=%d err=%v", id, claims.UserID, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	log.Printf("news comment: id=%d post_id=%d author_id=%d", comment.ID, id, claims.UserID)
 	respond(w, http.StatusCreated, comment)
 }
 
@@ -176,13 +216,15 @@ func (h *Handler) UploadImage(w http.ResponseWriter, r *http.Request) {
 
 	url, err := h.s3.Upload(r.Context(), data, ext)
 	if err != nil {
+		log.Printf("news upload failed: file=%s size=%d err=%v", header.Filename, len(data), err)
 		http.Error(w, "upload failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	log.Printf("news upload: file=%s size=%d url=%s", header.Filename, len(data), url)
 	respond(w, http.StatusOK, map[string]string{
 		"url":      url,
-		"filename": url, // full URL — stored directly in image_url field
+		"filename": url,
 	})
 }
 

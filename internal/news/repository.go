@@ -12,6 +12,7 @@ type Repository interface {
 	List(ctx context.Context) ([]Post, error)
 	Get(ctx context.Context, id uint) (*PostDetail, error)
 	Create(ctx context.Context, p *Post) error
+	Update(ctx context.Context, id uint, title, body string, imageURL *string) error
 	CreateComment(ctx context.Context, c *Comment) error
 	Delete(ctx context.Context, id uint) error
 }
@@ -114,6 +115,17 @@ func (r *mysqlRepository) CreateComment(ctx context.Context, c *Comment) error {
 	`, c.ID)
 	if err != nil {
 		return fmt.Errorf("load comment: %w", err)
+	}
+	return nil
+}
+
+func (r *mysqlRepository) Update(ctx context.Context, id uint, title, body string, imageURL *string) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE news_posts SET title=?, body=?, image_url=? WHERE id=?`,
+		title, body, imageURL, id,
+	)
+	if err != nil {
+		return fmt.Errorf("update post: %w", err)
 	}
 	return nil
 }

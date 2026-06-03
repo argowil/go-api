@@ -2,6 +2,7 @@ package user
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -22,6 +23,7 @@ func NewHandler(service *Service) *Handler {
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	users, err := h.service.List(r.Context())
 	if err != nil {
+		log.Printf("user list failed: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -37,6 +39,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 
 	u, err := h.service.GetByID(r.Context(), id)
 	if err != nil {
+		log.Printf("user get failed: id=%d err=%v", id, err)
 		http.Error(w, "user not found", http.StatusNotFound)
 		return
 	}
@@ -52,9 +55,11 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 
 	u, err := h.service.Create(r.Context(), req)
 	if err != nil {
+		log.Printf("user create failed: email=%s err=%v", req.Email, err)
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
+	log.Printf("user created: id=%d email=%s role=%s", u.ID, u.Email, u.Role)
 	respond(w, http.StatusCreated, u)
 }
 
@@ -73,9 +78,11 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 
 	u, err := h.service.Update(r.Context(), id, req)
 	if err != nil {
+		log.Printf("user update failed: id=%d err=%v", id, err)
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
+	log.Printf("user updated: id=%d", id)
 	respond(w, http.StatusOK, u)
 }
 
@@ -87,9 +94,11 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.service.Delete(r.Context(), id); err != nil {
+		log.Printf("user delete failed: id=%d err=%v", id, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	log.Printf("user deleted: id=%d", id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

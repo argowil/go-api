@@ -121,6 +121,7 @@ func (c *Client) GetOpenShift(id string) (*OpenShift, error) {
 		Data struct {
 			OpenShift struct {
 				ID                 string `json:"id"`
+				OccurrenceID       string `json:"occurrence_id"`
 				Date               string `json:"date"`
 				StartTime          string `json:"starttime"`
 				EndTime            string `json:"endtime"`
@@ -128,7 +129,7 @@ func (c *Client) GetOpenShift(id string) (*OpenShift, error) {
 				TeamID             string `json:"team_id"`
 				DepartmentID       string `json:"department_id"`
 				ShiftID            string `json:"shift_id"`
-				InstancesRemaining string `json:"instances_remaining"`
+				InstancesRemaining int    `json:"instances_remaining"`
 				ApprovalRequired   bool   `json:"approval_required"`
 				Description        string `json:"description"`
 			} `json:"OpenShift"`
@@ -141,9 +142,14 @@ func (c *Client) GetOpenShift(id string) (*OpenShift, error) {
 		return nil, err
 	}
 	breakMin, _ := strconv.Atoi(raw.Data.OpenShift.Break)
-	remaining, _ := strconv.Atoi(raw.Data.OpenShift.InstancesRemaining)
+	remaining := raw.Data.OpenShift.InstancesRemaining
+	occID := raw.Data.OpenShift.OccurrenceID
+	if occID == "" {
+		occID = raw.Data.OpenShift.ID
+	}
 	return &OpenShift{
 		ID:                 raw.Data.OpenShift.ID,
+		OccurrenceID:       occID,
 		Date:               raw.Data.OpenShift.Date,
 		StartTime:          raw.Data.OpenShift.StartTime,
 		EndTime:            raw.Data.OpenShift.EndTime,
@@ -158,7 +164,9 @@ func (c *Client) GetOpenShift(id string) (*OpenShift, error) {
 	}, nil
 }
 
-// ClaimOpenShift assigns an employee to an open shift via Shiftbase rosters.
+// ClaimOpenShift assigns an employee to an open shift.
+// Creates a roster entry linked to the open shift, then decrements instances_remaining.
+// If instances_remaining reaches 0, the open shift is deleted.
 func (c *Client) ClaimOpenShift(shiftbaseUserID int, shift OpenShift) error {
 	type rosterBody struct {
 		Roster struct {
@@ -190,9 +198,9 @@ func (c *Client) ClaimOpenShift(shiftbaseUserID int, shift OpenShift) error {
 		return fmt.Errorf("marshal claim: %w", err)
 	}
 
-	url := c.baseURL + "/rosters"
-	log.Printf("shiftbase POST %s (claim open shift %s for user %d)", url, shift.ID, shiftbaseUserID)
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
+	rosterURL := c.baseURL + "/rosters"
+	log.Printf("shiftbase POST %s (claim open shift %s for user %d)", rosterURL, shift.ID, shiftbaseUserID)
+	req, err := http.NewRequest(http.MethodPost, rosterURL, bytes.NewReader(payload))
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
@@ -209,6 +217,64 @@ func (c *Client) ClaimOpenShift(shiftbaseUserID int, shift OpenShift) error {
 	if resp.StatusCode >= 400 {
 		b, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("shiftbase returned %d: %s", resp.StatusCode, b)
+	}
+
+	newCount := shift.InstancesRemaining - 1
+	if newCount <= 0 {
+		occID := shift.OccurrenceID
+		if occID == "" {
+			occID = shift.ID
+		}
+		if err := c.DeleteOpenShift(occID); err != nil {
+			log.Printf("open shifts: auto-delete after last claim failed (shift %s): %v", shift.ID, err)
+		}
+	} else {
+		if err := c.decrementOpenShiftInstances(shift, newCount); err != nil {
+			log.Printf("open shifts: decrement instances failed (shift %s): %v", shift.ID, err)
+		}
+	}
+
+	return nil
+}
+
+// decrementOpenShiftInstances updates instances_remaining on an open shift.
+func (c *Client) decrementOpenShiftInstances(shift OpenShift, newCount int) error {
+	type body struct {
+		OpenShift struct {
+			InstancesRemaining int `json:"instances_remaining"`
+		} `json:"OpenShift"`
+	}
+	var b body
+	b.OpenShift.InstancesRemaining = newCount
+
+	payload, err := json.Marshal(b)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+
+	occID := shift.OccurrenceID
+	if occID == "" {
+		occID = shift.ID
+	}
+	url := c.baseURL + "/open_shifts/" + occID
+	log.Printf("shiftbase PUT %s instances_remaining=%d", url, newCount)
+	req, err := http.NewRequest(http.MethodPut, url, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Authorization", "API "+c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("update open shift: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		b2, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("shiftbase returned %d: %s", resp.StatusCode, b2)
 	}
 	return nil
 }

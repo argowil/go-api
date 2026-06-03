@@ -16,6 +16,7 @@ type Repository interface {
 	List(ctx context.Context) ([]User, error)
 	Create(ctx context.Context, u *User) error
 	Update(ctx context.Context, u *User) error
+	SetShiftbaseID(ctx context.Context, id uint, shiftbaseID int) error
 	Delete(ctx context.Context, id uint) error
 }
 
@@ -86,6 +87,17 @@ func (r *mysqlRepository) Update(ctx context.Context, u *User) error {
 	)
 	if err != nil {
 		return fmt.Errorf("update user: %w", err)
+	}
+	return nil
+}
+
+func (r *mysqlRepository) SetShiftbaseID(ctx context.Context, id uint, shiftbaseID int) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE users SET shiftbase_employee_id=?, updated_at=NOW() WHERE id=?`,
+		shiftbaseID, id,
+	)
+	if err != nil {
+		return fmt.Errorf("set shiftbase id: %w", err)
 	}
 	return nil
 }

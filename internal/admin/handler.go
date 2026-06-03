@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
@@ -159,6 +160,74 @@ func (h *Handler) UpdateEmployee(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusOK, u)
 }
 
+// SyncShiftbase creates a Shiftbase account for an existing employee and links the ID.
+//
+//	POST /admin/employees/{id}/sync-shiftbase
+func (h *Handler) SyncShiftbase(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+
+	if !h.sb.Enabled() {
+		http.Error(w, "Shiftbase is not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	u, err := h.users.FindByIDAdmin(r.Context(), id)
+	if err != nil {
+		http.Error(w, "employee not found", http.StatusNotFound)
+		return
+	}
+	if u.ShiftbaseEmployeeID != nil {
+		http.Error(w, "employee already linked to Shiftbase", http.StatusConflict)
+		return
+	}
+
+	teamID := ""
+	if len(h.defaultDepartmentIDs) > 0 {
+		teamID = strconv.Itoa(h.defaultDepartmentIDs[0])
+	}
+
+	sbID, err := h.sb.CreateEmployee(shiftbase.CreateEmployeeRequest{
+		FirstName: u.FirstName,
+		LastName:  u.LastName,
+		Email:     u.Email,
+		TeamID:    teamID,
+	})
+	if err != nil {
+		// 422 = email already exists in Shiftbase — look up the existing employee instead
+		if isShiftbase422(err) {
+			existing, lookupErr := h.sb.FindEmployeeByEmail(u.Email)
+			if lookupErr != nil {
+				log.Printf("admin sync shiftbase: lookup failed for user_id=%d: %v", id, lookupErr)
+				http.Error(w, "email already exists in Shiftbase but lookup failed", http.StatusBadGateway)
+				return
+			}
+			if existing == nil {
+				http.Error(w, "email already exists in Shiftbase but could not find the account", http.StatusBadGateway)
+				return
+			}
+			log.Printf("admin sync shiftbase: linking existing shiftbase_id=%d for user_id=%d", existing.ID, id)
+			sbID = existing.ID
+		} else {
+			log.Printf("admin sync shiftbase: failed for user_id=%d: %v", id, err)
+			http.Error(w, fmt.Sprintf("could not create Shiftbase employee: %v", err), http.StatusBadGateway)
+			return
+		}
+	}
+
+	if err := h.users.SetShiftbaseID(r.Context(), id, sbID); err != nil {
+		log.Printf("admin sync shiftbase: db update failed for user_id=%d: %v", id, err)
+		http.Error(w, "could not link Shiftbase ID", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("admin sync shiftbase: user_id=%d linked to shiftbase_id=%d", id, sbID)
+	respond(w, http.StatusOK, map[string]int{"shiftbase_employee_id": sbID})
+}
+
 // DeleteEmployee soft-deletes an employee account and removes them from Shiftbase.
 //
 //	DELETE /admin/employees/{id}
@@ -189,6 +258,10 @@ func (h *Handler) DeleteEmployee(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func isShiftbase422(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "422")
 }
 
 func parseID(r *http.Request) (uint, error) {
